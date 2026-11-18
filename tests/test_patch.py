@@ -107,6 +107,8 @@ with tempfile.TemporaryDirectory() as tmp:
     for marker in [
         'NSStatusItem.variableLength',
         'Stabilitätsprofil · 120 Hz',
+        'Schnellprofile',
+        'activateProfileFromMenu(_ sender: NSMenuItem)',
         'quick120.isEnabled = DisplayStabilityPolicy.canRequest',
         'if shouldRestoreHiDPI { restoreHiDPISafely',
         'private func modeFingerprint(for display: PhysicalDisplay)',
@@ -129,13 +131,19 @@ with tempfile.TemporaryDirectory() as tmp:
     ]:
         assert marker in d,marker
     assert 'panel.supportedRefreshRates.contains(rate)' in (ROOT/'UI/DisplayDashboard.swift').read_text()
+    for feature in ['Display Health', 'Native HDR & HiDPI Lab', 'Automatische Profile', '.ultraThinMaterial']:
+        assert feature in (ROOT/'UI/DisplayDashboard.swift').read_text(), feature
+    for marker in ['DisplayHealthJournal()', 'applyAutomaticProfilesIfAllowed()', 'Kompakte Statusanzeige', 'displayNativeAnalysis(physical)']:
+        assert marker in a, marker
+    assert 'private func profileCard(for panel: DashboardPanel)' in (ROOT/'UI/DisplayDashboard.swift').read_text()
+    assert 'cp "$ROOT/Core/DisplayProfiles.swift"' in (ROOT/'build.command').read_text()
     assert 'Bildstabilität & Bildrate' in (ROOT/'UI/DisplayDashboard.swift').read_text()
     assert 'model.setHiDPI?(panel.id, false)' in (ROOT/'UI/DisplayDashboard.swift').read_text()
     assert 'model.setRefreshRate?(requested.id, requested.hz)' in (ROOT/'UI/DisplayDashboard.swift').read_text()
     assert 'Button("Bildrate wechseln")' in (ROOT/'UI/DisplayDashboard.swift').read_text()
     for m in ['activate120FromMenu(_ sender: NSMenuItem)', 'restoreHiDPISafely(uuid: String, rung: Rung?)', 'DisplayStabilityPolicy.canRequest(hz, offered: offered)', 'dashboardSetRefreshRate(uuid: String, hz: Int)', 'nativeMode(for display: PhysicalDisplay, hz: Int)', 'CGCancelDisplayConfiguration(config)', 'setNativeMode(previous, on: nativeDisplay.id)', 'supportedRefreshRates: nativeRefreshRates(for: physical)', 'ui.model.setRefreshRate =']:
         assert m in a, m
-    for path in [app,disp,ROOT/'UI/DisplayDashboard.swift',ROOT/'Core/DisplayStabilityPolicy.swift']:
+    for path in [app,disp,ROOT/'UI/DisplayDashboard.swift',*list((ROOT/'Core').glob('*.swift'))]:
         result=subprocess.run(['swiftc','-frontend','-parse',str(path)],capture_output=True,text=True)
         assert result.returncode==0,(path,result.stderr)
     # Unsupported rate is rejected BEFORE the virtual display is touched.
@@ -145,6 +153,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert '3d105b0f18cc2522e27028bc1a1ee4b6ff1ef7d6' in build
     assert 'CFBundleShortVersionString</key><string>${BASE_VERSION}' in build
     assert 'CFBundleVersion</key><string>${BASE_VERSION}' in build
+    assert 'VERSION=' in build
     assert 'csrutil' not in build
     assert 'DisplayVendorID' not in build
     print('PASS: upstream anchors / source patch / live Hz profile / display filtering / Swift parser / safe build script')

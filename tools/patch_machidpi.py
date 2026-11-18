@@ -21,7 +21,7 @@ text = text.replace(old, new)
 
 # New modern dashboard is a separate file; keep upstream AppDelegate logic.
 anchor = '    private var reconcileWork: DispatchWorkItem?\n'
-insert = '''    private var dashboard: DashboardWindowController?\n    private var hdrConfirmations: [String: String] = [:]\n    private var seenModeFingerprints: [String: String] = [:]\n    private var barTimer: Timer?\n    private var refreshChangesInProgress: Set<String> = []\n'''
+insert = '''    private var dashboard: DashboardWindowController?\n    private var hdrConfirmations: [String: String] = [:]\n    private var seenModeFingerprints: [String: String] = [:]\n    private var barTimer: Timer?\n    private var refreshChangesInProgress: Set<String> = []\n    private let health = DisplayHealthJournal()\n'''
 if text.count(anchor) != 1:
     raise SystemExit('AppDelegate nicht kompatibel: reconcileWork-Anker fehlt')
 text = text.replace(anchor, anchor + insert)
@@ -30,9 +30,16 @@ text = text.replace(anchor, anchor + insert)
 anchor = '        reconcile()\n    }\n\n    func applicationWillTerminate'
 if text.count(anchor) != 1:
     raise SystemExit('AppDelegate nicht kompatibel: Start-Anker fehlt')
-text = text.replace(anchor, '''        reconcile()
+text = text.replace(anchor, '''        NSWorkspace.shared.notificationCenter.addObserver(self,
+            selector: #selector(mdcWillSleep(_:)), name: NSWorkspace.willSleepNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self,
+            selector: #selector(mdcDidWake(_:)), name: NSWorkspace.didWakeNotification, object: nil)
+        reconcile()
         barTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
             self?.updateStatusBar()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
+            self?.applyAutomaticProfilesIfAllowed()
         }
     }
 
@@ -54,6 +61,11 @@ insert = '''        let openDashboard = NSMenuItem(title: "Mac Display Control �
                 menu.addItem(disabledItem("Virtuelle Spiegelung: HDR-Ausgabe ungeprüft"))
             }
         }
+        let compactItem = NSMenuItem(title: "Kompakte Statusanzeige",
+            action: #selector(toggleCompactStatus(_:)), keyEquivalent: "")
+        compactItem.target = self
+        compactItem.state = UserDefaults.standard.bool(forKey: "io.github.MrNoooooooob.mdc.compactStatus") ? .on : .off
+        menu.addItem(compactItem)
         menu.addItem(.separator())
         if let selected = monitor {
             let quick120 = NSMenuItem(title: "Stabilitätsprofil · 120 Hz",
@@ -67,6 +79,21 @@ insert = '''        let openDashboard = NSMenuItem(title: "Mac Display Control �
                 && (hidpi.sessions[selected.id] != nil
                     || CGDisplayMirrorsDisplay(selected.id) == kCGNullDirectDisplay)
             menu.addItem(quick120)
+            let menuProfiles = NSMenu()
+            for profile in DisplayProfileKind.allCases {
+                let item = NSMenuItem(title: "\(profile.title) · \(profile.hertz) Hz",
+                                      action: #selector(activateProfileFromMenu(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ["uuid": selected.uuid, "hz": profile.hertz]
+                item.isEnabled = DisplayStabilityPolicy.canRequest(profile.hertz, offered: offered)
+                    && !refreshChangesInProgress.contains(selected.uuid)
+                    && !hidpi.pending.contains(selected.id)
+                item.state = abs((CGDisplayCopyDisplayMode(selected.id)?.refreshRate ?? 0) - Double(profile.hertz)) < 0.8 ? .on : .off
+                menuProfiles.addItem(item)
+            }
+            let profileMenu = NSMenuItem(title: "Schnellprofile", action: nil, keyEquivalent: "")
+            profileMenu.submenu = menuProfiles
+            menu.addItem(profileMenu)
             if !quick120.isEnabled {
                 menu.addItem(disabledItem("120 Hz derzeit nicht nativ gemeldet – Anzeige prüfen"))
             }
@@ -90,7 +117,64 @@ if text.count(anchor) != 1:
 text = text.replace(anchor, '        lastErrors[display.uuid] = nil\n        hdrConfirmations.removeValue(forKey: display.uuid)\n        let saved = store.prefs(for: display.uuid)')
 
 anchor = '    // MARK: - Actions\n'
-addition = r'''    // MARK: - Live menu bar status
+addition = r'''    @objc private func mdcWillSleep(_ notification: Notification) {
+        health.record(.sleep, message: "macOS geht in Ruhezustand")
+    }
+
+    @objc private func mdcDidWake(_ notification: Notification) {
+        hdrConfirmations.removeAll()  // HDR may change across sleep/wake.
+        health.record(.wake, message: "macOS ist aufgewacht")
+        // Allow WindowServer and HDMI modes to settle before any opt-in action.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
+            self?.rebuildMenu()
+            self?.applyAutomaticProfilesIfAllowed()
+        }
+    }
+
+    private func applyAutomaticProfilesIfAllowed() {
+        for display in Displays.external(excluding: hidpi.virtualIDs) {
+            let offered = nativeRefreshRates(for: display)
+            let selection = DisplayProfileStore.selected(for: display.uuid)
+            let externalMirror = CGDisplayMirrorsDisplay(display.id) != kCGNullDirectDisplay
+                && hidpi.sessions[display.id] == nil
+            guard ProfileAutomation.shouldOfferAutoApply(
+                enabled: ProfileAutomation.enabled(for: display.uuid),
+                selected: selection, offeredRates: offered,
+                mirrorOwnedByOtherApp: externalMirror,
+                pending: hidpi.pending.contains(display.id) || refreshChangesInProgress.contains(display.uuid))
+            else { continue }
+            guard let target = selection else { continue }
+            health.record(.note, id: display.uuid,
+                          message: "Automatisches Profil \(target.title) nach Aufwachen angefordert")
+            dashboardSetRefreshRate(uuid: display.uuid, hz: target.hertz)
+        }
+    }
+
+    private func displayNativeAnalysis(_ monitor: PhysicalDisplay) -> String {
+        let (infos, _) = Displays.modeInfosWithRefs(for: monitor.id)
+        let candidates = infos.map { mode in
+            NativeDisplayMode(logicalWidth: mode.width, logicalHeight: mode.height,
+                              pixelWidth: mode.pixelWidth, pixelHeight: mode.pixelHeight,
+                              hertz: mode.refreshRate)
+        }
+        let screen = NSScreen.screens.first(where: {
+            guard let number = $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                as? NSNumber else { return false }
+            return number.uint32Value == monitor.id
+        })
+        let edr = screen.map { Double($0.maximumPotentialExtendedDynamicRangeColorComponentValue) }
+        return NativeDisplayEngine.report(modes: candidates,
+            panelWidth: monitor.pixelWidth, panelHeight: monitor.pixelHeight,
+            edrPotential: edr).summary
+    }
+
+    @objc private func toggleCompactStatus(_ sender: NSMenuItem) {
+        let key = "io.github.MrNoooooooob.mdc.compactStatus"
+        UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: key), forKey: key)
+        rebuildMenu()
+    }
+
+    // MARK: - Live menu bar status
 
     private func statusDisplay() -> PhysicalDisplay? {
         let physical = Displays.external(excluding: hidpi.virtualIDs)
@@ -165,7 +249,10 @@ addition = r'''    // MARK: - Live menu bar status
         let retina = scale >= 1.9 && pixelRatio >= 1.9
         let hz = CGDisplayCopyDisplayMode(monitor.id)?.refreshRate ?? monitor.refreshRate
         let hdr = hdrConfirmed(for: monitor) ? "HDR ✓*" : "HDR ?"
-        statusItem.button?.title = "HiDPI \(retina ? "2×" : "aus") · \(hdr) · \(Int(hz.rounded())) Hz"
+        let compact = UserDefaults.standard.bool(forKey: "io.github.MrNoooooooob.mdc.compactStatus")
+        statusItem.button?.title = compact
+            ? "\(retina ? "2×" : "1×") · \(hdrConfirmed(for: monitor) ? "H*" : "H?") · \(Int(hz.rounded()))Hz"
+            : "HiDPI \(retina ? "2×" : "aus") · \(hdr) · \(Int(hz.rounded())) Hz"
         statusItem.button?.imagePosition = .imageLeading
         statusItem.button?.toolTip = "\(monitor.name) | HDR ✓*: Schalter für diesen Modus manuell bestätigt (keine Signalmessung). Virtuelle Spiegelung kann HDR begrenzen."
         updateDashboard()
@@ -191,6 +278,19 @@ addition = r'''    // MARK: - Live menu bar status
             ui.model.setHDRConfirmed = { [weak self] uuid, enabled in
                 self?.dashboardSetHDRConfirmed(uuid: uuid, enabled: enabled)
             }
+            ui.model.setAutoProfile = { [weak self] uuid, enabled in
+                ProfileAutomation.setEnabled(enabled, for: uuid)
+                self?.health.record(.note, id: uuid, message: enabled
+                    ? "Profilautomatik nach Aufwachen aktiviert" : "Profilautomatik deaktiviert")
+                self?.rebuildMenu()
+            }
+            ui.model.clearHealth = { [weak self] in
+                self?.health.clear()
+                self?.updateDashboard()
+            }
+            ui.model.checkForUpdate = { [weak self] in
+                self?.checkGithubVersion()
+            }
             ui.model.reload = { [weak self] in
                 self?.rebuildMenu()
             }
@@ -198,6 +298,27 @@ addition = r'''    // MARK: - Live menu bar status
         }
         updateDashboard()
         dashboard?.show()
+    }
+
+    private func checkGithubVersion() {
+        guard let url = URL(string: "https://api.github.com/repos/MrNoooooooob/mac-display-control/releases/latest") else { return }
+        dashboard?.model.updateMessage = "Prüfe GitHub-Releases …"
+        var request = URLRequest(url: url)
+        request.setValue("MacDisplayControl/1.0", forHTTPHeaderField: "User-Agent")
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            let message: String
+            if let error { message = "Update-Prüfung fehlgeschlagen: \(error.localizedDescription)" }
+            else if let response = response as? HTTPURLResponse, response.statusCode != 200 {
+                message = "GitHub-Release nicht abrufbar (HTTP \(response.statusCode))."
+            } else if let data,
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let tag = object["tag_name"] as? String,
+                let remote = ReleaseVersion(tag),
+                let local = ReleaseVersion(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0") {
+                message = remote > local ? "Update verfügbar: \(tag) – GitHub-Releases öffnen" : "Installiert: \(local). Kein neuer stabiler Release."
+            } else { message = "Kein gültiges Release gefunden." }
+            DispatchQueue.main.async { self?.dashboard?.model.updateMessage = message }
+        }.resume()
     }
 
     private func dashboardSetHiDPI(uuid: String, enabled: Bool) {
@@ -217,8 +338,10 @@ addition = r'''    // MARK: - Live menu bar status
             let chosen = store.prefs(for: uuid)?.rung
                 ?? Scaling.ladder(panelWidth: display.pixelWidth,
                                   panelHeight: display.pixelHeight).first
+            health.record(.note, id: uuid, message: "HiDPI manuell angefordert")
             enableDisplay(display, rung: chosen)
         } else {
+            health.record(.note, id: uuid, message: "HiDPI manuell deaktiviert")
             hidpi.disable(physicalID: display.id)
             var prefs = store.prefs(for: uuid)
                 ?? DisplayPrefs(enabled: false, rung: nil)
@@ -290,6 +413,17 @@ addition = r'''    // MARK: - Live menu bar status
     @objc private func activate120FromMenu(_ sender: NSMenuItem) {
         guard let uuid = sender.representedObject as? String else { return }
         dashboardSetRefreshRate(uuid: uuid, hz: 120)
+    }
+
+    // v0.0.4-beta: direct, supported-only presets in the macOS menu bar.
+    @objc private func activateProfileFromMenu(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String: Any],
+              let uuid = payload["uuid"] as? String,
+              let hz = payload["hz"] as? Int,
+              let profile = DisplayProfileKind.allCases.first(where: { $0.hertz == hz })
+        else { return }
+        DisplayProfileStore.save(profile, for: uuid)
+        dashboardSetRefreshRate(uuid: uuid, hz: hz)
     }
 
     // Re-resolve the display after unmirroring; never recreate HiDPI with a
@@ -366,11 +500,13 @@ addition = r'''    // MARK: - Live menu bar status
             guard let self else { return }
             let measured = CGDisplayCopyDisplayMode(nativeDisplay.id)?.refreshRate ?? 0
             if !DisplayStabilityPolicy.isApplied(hz, measured: measured) {
+                self.health.record(.warning, id: uuid, message: "\(hz) Hz nicht bestätigt – Rückstellung")
                 _ = self.setNativeMode(previous, on: nativeDisplay.id)
                 self.lastErrors[uuid] = "Moduswechsel nicht bestätigt; vorherige Bildrate wiederhergestellt"
                 self.dashboard?.model.lastNotice = self.lastErrors[uuid] ?? "Bildratenwechsel fehlgeschlagen"
             } else {
                 self.lastErrors[uuid] = nil
+                self.health.record(.modeChanged, id: uuid, message: "Bildrate \(hz) Hz bestätigt")
                 self.dashboard?.model.lastNotice = "\(hz) Hz nativ bestätigt. HDR in macOS neu prüfen."
             }
             if shouldRestoreHiDPI {
@@ -395,9 +531,9 @@ addition = r'''    // MARK: - Live menu bar status
     }
 
     private func updateDashboard() {
-        guard let model = dashboard?.model else { return }
-        model.loginEnabled = SMAppService.mainApp.status == .enabled
-        model.panels = Displays.external(excluding: hidpi.virtualIDs).map { physical in
+        // Health observations must continue even if the dashboard window
+        // has never been opened (menu-bar-only mode).
+        let panels = Displays.external(excluding: hidpi.virtualIDs).map { physical in
             let session = hidpi.sessions[physical.id]
             // A mirror slave may lose the LG name and report synthetic 2x/4x
             // backing modes as physical panel pixels. Prefer the pre-mirror
@@ -443,8 +579,21 @@ addition = r'''    // MARK: - Live menu bar status
                                                           panelHeight: realHeight),
                 activeRung: session?.currentRung,
                 errorText: lastErrors[physical.uuid],
-                hdrConfirmedByUser: hdrConfirmed(for: physical)
+                hdrConfirmedByUser: hdrConfirmed(for: physical),
+                nativeModeAnalysis: displayNativeAnalysis(physical)
             )
+        }
+        let snapshots = panels.map { p in
+            DisplayHealthSample(displayID: p.id, logicalWidth: p.logicalWidth,
+                logicalHeight: p.logicalHeight, renderWidth: p.renderWidth,
+                renderHeight: p.renderHeight, hertz: Int(p.panelHz.rounded()),
+                mirrored: p.isEnabled || p.isExternallyMirrored, scale: p.backingScale)
+        }
+        health.observe(snapshots)
+        if let model = dashboard?.model {
+            model.loginEnabled = SMAppService.mainApp.status == .enabled
+            model.panels = panels
+            model.healthEvents = health.events
         }
     }
 

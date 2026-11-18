@@ -5,7 +5,7 @@ ROOT="$PWD"
 UPSTREAM="https://github.com/ac50/machidpi.git"
 PIN="3d105b0f18cc2522e27028bc1a1ee4b6ff1ef7d6"
 VERSION="$(tr -d '\r\n[:space:]' < "$ROOT/VERSION")"
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9][a-zA-Z0-9.-]*)?$ ]] || { echo "Ungültige VERSION" >&2; exit 1; }
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9][a-zA-Z0-9.-]*)?$ ]] || { echo 'VERSION ungültig' >&2; exit 1; }
 BASE_VERSION="${VERSION%%-*}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -37,6 +37,10 @@ if [[ "$(git rev-parse HEAD)" != "$PIN" ]]; then
 fi
 cp "$ROOT/UI/DisplayDashboard.swift" Sources/machidpi/DisplayDashboard.swift
 cp "$ROOT/Core/DisplayStabilityPolicy.swift" Sources/machidpi/DisplayStabilityPolicy.swift
+cp "$ROOT/Core/DisplayProfiles.swift" Sources/machidpi/DisplayProfiles.swift
+for module in DisplayHealth NativeDisplayEngine ProfileAutomation ReleaseVersion; do
+    cp "$ROOT/Core/${module}.swift" "Sources/machidpi/${module}.swift"
+done
 python3 "$ROOT/tools/patch_machidpi.py" .
 
 echo 'Baue Mac Display Control (mit originalem machidpi-HiDPI-Kern) …'

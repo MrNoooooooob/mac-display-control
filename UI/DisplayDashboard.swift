@@ -26,12 +26,18 @@ struct DashboardPanel: Identifiable {
     let errorText: String?
     // User confirmation is session-local; it is NOT a hardware HDR measurement.
     let hdrConfirmedByUser: Bool
+    let nativeModeAnalysis: String
 }
 
 final class DashboardModel: ObservableObject {
     @Published var panels: [DashboardPanel] = []
     @Published var loginEnabled = false
     @Published var lastNotice = ""
+    @Published var healthEvents: [DisplayHealthEvent] = []
+    @Published var updateMessage = "Noch nicht geprüft"
+    var setAutoProfile: ((String, Bool) -> Void)?
+    var clearHealth: (() -> Void)?
+    var checkForUpdate: (() -> Void)?
     var setHiDPI: ((String, Bool) -> Void)?
     var setRung: ((String, Rung) -> Void)?
     var setRefreshRate: ((String, Int) -> Void)?
@@ -40,7 +46,7 @@ final class DashboardModel: ObservableObject {
     var reload: (() -> Void)?
 
     func diagnosticText() -> String {
-        var lines = ["Mac Display Control 0.0.2 Beta · by MrNoooooooob", "HDR-Schalter: manuell bestätigt oder unbekannt; HDMI-HDR/EDR-Ausgabe nicht automatisch messbar", ""]
+        var lines = ["Mac Display Control \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Beta") · by MrNoooooooob", "HDR-Schalter: manuell bestätigt oder unbekannt; HDMI-HDR/EDR-Ausgabe nicht automatisch messbar", ""]
         for p in panels {
             lines += [
                 "Display: \(p.name)",
@@ -58,6 +64,7 @@ final class DashboardModel: ObservableObject {
                 "Fehler: \(p.errorText ?? "keiner")", ""
             ]
         }
+        lines.append("\nGesundheitsprotokoll:\n" + healthEvents.suffix(80).map { "\($0.kind.label): \($0.message)" }.joined(separator: "\n"))
         return lines.joined(separator: "\n")
     }
 }
@@ -94,6 +101,7 @@ private struct DashboardView: View {
     @State private var pendingEnableUUID: String?
     @State private var pendingRefresh: (id: String, hz: Int)?
     @State private var showRefreshWarning = false
+    @State private var activeSection = 0
     private let cyan = Color(red: 0.40, green: 0.84, blue: 1.00)
     private let panelBackground = Color.white.opacity(0.075)
 
@@ -116,13 +124,30 @@ private struct DashboardView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     header
+                    Picker("Bereich", selection: $activeSection) {
+                        Text("Übersicht").tag(0)
+                        Text("Profile").tag(1)
+                        Text("Display Health").tag(2)
+                        Text("HDR / HiDPI Lab").tag(3)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Dashboard-Bereich")
                     if let panel = current {
                         displaySelector
-                        stats(for: panel)
-                        statusCard(for: panel)
-                        stabilityCard(for: panel)
-                        modeCard(for: panel)
-                        hdrCard(for: panel)
+                        if activeSection == 0 {
+                            stats(for: panel)
+                            statusCard(for: panel)
+                            stabilityCard(for: panel)
+                            modeCard(for: panel)
+                        } else if activeSection == 1 {
+                            profileCard(for: panel)
+                            automationCard(for: panel)
+                        } else if activeSection == 2 {
+                            healthCard(for: panel)
+                        } else {
+                            hdrCard(for: panel)
+                            nativeLabCard(for: panel)
+                        }
                     } else {
                         card {
                             Label("Kein externer Monitor erkannt", systemImage: "display.trianglebadge.exclamationmark")
@@ -167,13 +192,13 @@ private struct DashboardView: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 7) {
-                Text("DISPLAY CONTROL · MrNoooooooob")
+                Text("MAC DISPLAY CONTROL 1.0 · MrNoooooooob")
                     .font(.caption.bold())
                     .tracking(2.5)
                     .foregroundStyle(cyan)
                 Text("Dein Monitor. Deine Einstellungen.")
                     .font(.system(size: 29, weight: .bold, design: .rounded))
-                Text("LG UltraGear OLED · HiDPI mit machidpi-Technik")
+                Text("HiDPI · Profile · Monitor Health · HDR Lab · Apple Silicon")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -218,7 +243,7 @@ private struct DashboardView: View {
                 .font(.caption)
         }
         .padding(18)
-        .background(panelBackground, in: RoundedRectangle(cornerRadius: 18))
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
     }
 
     private func stats(for panel: DashboardPanel) -> some View {
@@ -241,7 +266,7 @@ private struct DashboardView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(17)
-        .background(panelBackground, in: RoundedRectangle(cornerRadius: 18))
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
     }
 
     private func statusCard(for panel: DashboardPanel) -> some View {
@@ -341,6 +366,49 @@ private struct DashboardView: View {
             Label("HDR-Signal wird nicht automatisch gemessen. Nach jedem Wechsel HDR manuell prüfen. Pinke Artefakte kann die App nicht direkt erkennen.", systemImage: "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundStyle(.orange)
+        }
+    }
+
+    // v0.0.3: stored per-display profiles. Applying requires an explicit
+    // click and uses the already guarded refresh switching implementation.
+    private func profileCard(for panel: DashboardPanel) -> some View {
+        card {
+            HStack {
+                Label("Displayprofile", systemImage: "square.stack.3d.up")
+                    .font(.title3.bold())
+                Spacer()
+                Text("Pro Monitor gespeichert")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("Profile merken sich deine Bildratenwahl. HiDPI und HDR werden durch die Profilwahl nicht ungefragt umgeschaltet.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                ForEach(DisplayProfileKind.allCases) { profile in
+                    Button {
+                        DisplayProfileStore.save(profile, for: panel.id)
+                        model.lastNotice = "Profil \(profile.title) gespeichert"
+                        if abs(panel.panelHz - Double(profile.hertz)) >= 0.8 {
+                            pendingRefresh = (id: panel.id, hz: profile.hertz)
+                            showRefreshWarning = true
+                        }
+                    } label: {
+                        VStack(spacing: 4) {
+                            Text(profile.title).font(.callout.bold())
+                            Text(profile.detail).font(.caption)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(DisplayProfileStore.selected(for: panel.id) == profile ? cyan : .gray)
+                    .disabled(panel.isPending || panel.isExternallyMirrored || !panel.supportedRefreshRates.contains(profile.hertz))
+                    .help("Nur nativ gemeldete Bildraten; der Wechsel muss bestätigt werden")
+                }
+            }
+            Text("Speicherung erfolgt lokal per Monitor-ID. Ein automatischer Moduswechsel beim Login ist aus Sicherheitsgründen noch nicht aktiv.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -468,6 +536,87 @@ private struct DashboardView: View {
         }
     }
 
+    // Optional automatic profile application on wake. Default is OFF.
+    private func automationCard(for panel: DashboardPanel) -> some View {
+        card {
+            Label("Automatische Profile", systemImage: "arrow.triangle.2.circlepath")
+                .font(.title3.bold())
+            Toggle("Gespeichertes Profil nach dem Aufwachen anwenden", isOn: Binding(
+                get: { ProfileAutomation.enabled(for: panel.id) },
+                set: { model.setAutoProfile?(panel.id, $0) }
+            ))
+            .toggleStyle(.switch)
+            Text("Standardmäßig deaktiviert. Die Automatik prüft nach dem Aufwachen, ob die gewünschte Bildrate nativ vorhanden ist. Bei einer fremden Spiegelung oder laufendem Moduswechsel bleibt alles unverändert. HDR wird nicht automatisch umgeschaltet.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func healthCard(for panel: DashboardPanel) -> some View {
+        card {
+            HStack {
+                Label("Display Health", systemImage: "waveform.path.ecg")
+                    .font(.title3.bold())
+                Spacer()
+                Text("Letzte 250 Ereignisse lokal")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text("Protokolliert Display-An-/Abmeldung, Sleep/Wake, Modus- und Spiegelungswechsel. Pinke Pixelartefakte kann die App nicht direkt messen.")
+                .font(.subheadline).foregroundStyle(.secondary)
+            if model.healthEvents.isEmpty {
+                Text("Noch keine Ereignisse aufgezeichnet.").foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(model.healthEvents.reversed().prefix(20))) { event in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(event.timestamp, style: .time)
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .frame(width: 78, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(event.kind.label).font(.caption.bold())
+                            Text(event.message).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    Divider().opacity(0.25)
+                }
+            }
+            HStack {
+                Button("Diagnose + Ereignisse kopieren") {
+                    let paste = NSPasteboard.general
+                    paste.clearContents()
+                    paste.setString(model.diagnosticText(), forType: .string)
+                    model.lastNotice = "Diagnose kopiert"
+                }
+                .buttonStyle(.bordered)
+                Spacer()
+                Button("Protokoll löschen", role: .destructive) {
+                    model.clearHealth?()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private func nativeLabCard(for panel: DashboardPanel) -> some View {
+        card {
+            Label("Native HDR & HiDPI Lab", systemImage: "waveform.path")
+                .font(.title3.bold())
+            Text(panel.nativeModeAnalysis)
+                .font(.subheadline)
+                .textSelection(.enabled)
+            Label("Nur lesende Analyse. Ein angezeigter HiDPI-Modus ist nicht zwingend aktivierbar. EDR-Werte beweisen kein HDR-Signal. Die virtuelle machidpi-Spiegelung besitzt keine verifizierte HDR-Pipeline.", systemImage: "info.circle")
+                .font(.caption).foregroundStyle(.orange)
+            HStack {
+                Button("Displays öffnen") { openDisplays() }
+                Spacer()
+                Button("Nach Updates suchen") { model.checkForUpdate?() }
+            }
+            Text(model.updateMessage).font(.caption).foregroundStyle(.secondary)
+            Text("Native Monitorerkennung, Modusdiagnose, Profilregeln und Protokollierung sind eigenständige Swift-Module. Der virtuelle Bildschirm wird derzeit weiterhin von der MIT-lizenzierten machidpi-Engine bereitgestellt.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     private var footer: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -490,7 +639,7 @@ private struct DashboardView: View {
             if !model.lastNotice.isEmpty {
                 Text(model.lastNotice).font(.caption).foregroundStyle(cyan)
             }
-            Text("v0.0.2-beta · © 2026 MrNoooooooob · Basis: machidpi (MIT, © 2026 ac50). Empfohlen: 120 Hz für stabile virtuelle HiDPI-Spiegelung. Es werden ausschließlich von macOS angebotene Modi gewählt. HDR-Ausgabe wird nicht automatisch verifiziert. Keine EDID-Overrides, kein SIP-Eingriff.")
+            Text("v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Beta") · © 2026 MrNoooooooob · Basis: machidpi (MIT, © 2026 ac50). Empfohlen: 120 Hz für stabile virtuelle HiDPI-Spiegelung. Es werden ausschließlich von macOS angebotene Modi gewählt. HDR-Ausgabe wird nicht automatisch verifiziert. Keine EDID-Overrides, kein SIP-Eingriff.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -501,9 +650,9 @@ private struct DashboardView: View {
         VStack(alignment: .leading, spacing: 17, content: content)
             .padding(21)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(panelBackground, in: RoundedRectangle(cornerRadius: 20))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
             .overlay(RoundedRectangle(cornerRadius: 20)
-                .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
+                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
     }
 
     private func openDisplays() {

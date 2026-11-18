@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: mdc-${{ github.ref }}
+  group: mac-display-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -18,57 +18,76 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - name: Validate version and code
+      - name: Check version and publication scripts
         shell: bash
         run: |
           set -euo pipefail
+          test -s RELEASE_NOTES.md
           VERSION=$(tr -d '\r\n[:space:]' < VERSION)
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9][a-zA-Z0-9.-]*)?$ ]]
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            [[ "$GITHUB_REF_NAME" == "v$VERSION" ]] || exit 1
+            [[ "$GITHUB_REF_NAME" == "v$VERSION" ]] || { echo 'VERSION und Git-Tag unterschiedlich'; exit 1; }
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "ARCHIVE=Mac-Display-Control-v$VERSION-macOS-arm64.zip" >> "$GITHUB_ENV"
-          test -s RELEASE_NOTES.md
-          bash -n build.command publish-update.command
+          echo "ARCHIVE=Mac-Display-Control-v${VERSION}-macOS-arm64.zip" >> "$GITHUB_ENV"
+          echo "DMG=Mac-Display-Control-v${VERSION}-macOS-arm64.dmg" >> "$GITHUB_ENV"
+          bash -n build.command
+          bash -n publish-github.command
+          bash -n publish-update.command
           python3 tests/test_patch.py
-          swiftc Core/DisplayStabilityPolicy.swift tests/StabilityPolicyTests.swift -o /tmp/mdc-tests
-          /tmp/mdc-tests
+          swiftc Core/DisplayStabilityPolicy.swift tests/StabilityPolicyTests.swift -o /tmp/stability-tests
+          /tmp/stability-tests
+          swiftc Core/DisplayProfiles.swift tests/DisplayProfileTests.swift -o /tmp/profile-tests
+          /tmp/profile-tests
+          swiftc Core/DisplayStabilityPolicy.swift Core/DisplayProfiles.swift Core/DisplayHealth.swift Core/NativeDisplayEngine.swift Core/ProfileAutomation.swift Core/ReleaseVersion.swift tests/CoreEngineTests.swift -o /tmp/core-tests
+          /tmp/core-tests
 
-      - name: Build Apple Silicon app
+      - name: Build signed ad-hoc macOS app (arm64)
         run: bash build.command
 
-      - name: Package finished .app
+      - name: Verify and ZIP finished .app
         shell: bash
         run: |
           set -euo pipefail
+          test -f 'Mac Display Control.app/Contents/Info.plist'
           test -x 'Mac Display Control.app/Contents/MacOS/MacDisplayControl'
           plutil -lint 'Mac Display Control.app/Contents/Info.plist'
           codesign --verify --deep 'Mac Display Control.app'
           ditto -c -k --sequesterRsrc --keepParent 'Mac Display Control.app' "$ARCHIVE"
           test -s "$ARCHIVE"
+          echo "Verified macOS asset: $ARCHIVE"
+          mkdir -p dmg-payload
+          cp -R 'Mac Display Control.app' dmg-payload/
+          ln -s /Applications dmg-payload/Applications
+          hdiutil create -volname 'Mac Display Control' -srcfolder dmg-payload \
+            -ov -format UDZO "$DMG"
+          test -s "$DMG"
+          echo "Verified macOS DMG: $DMG"
 
-      - name: Upload CI artifact
+      - name: Upload build artifact (including non-tag builds)
         uses: actions/upload-artifact@v4
         with:
           name: Mac-Display-Control-macOS-arm64
-          path: ${{ env.ARCHIVE }}
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.DMG }}
           if-no-files-found: error
 
-      - name: Publish GitHub release
+      - name: Publish/update GitHub release (tag builds only)
         if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
           set -euo pipefail
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" --clobber
+            # Local fallback might already have published the asset.
+            gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" "$DMG" --clobber
             gh release edit "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md
           else
             if [[ "$VERSION" == *-* ]]; then PRE=(--prerelease); else PRE=(); fi
-            gh release create "$GITHUB_REF_NAME" "$ARCHIVE" --verify-tag \
-              --title "Mac Display Control $VERSION" \
+            gh release create "$GITHUB_REF_NAME" "$ARCHIVE" "$DMG" \
+              --verify-tag --title "Mac Display Control $VERSION" \
               --notes-file RELEASE_NOTES.md "${PRE[@]}"
           fi
-          echo "Published: https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
+          echo "Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}"
