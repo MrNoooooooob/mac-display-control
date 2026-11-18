@@ -1,40 +1,73 @@
-#!/bin/bash
-# Publish v0.0.2-beta to an EXISTING MrNoooooooob/mac-display-control repo.
+#!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$PWD"
-OWNER=MrNoooooooob
-REPO=mac-display-control
-TARGET="$OWNER/$REPO"
-TAG=v0.0.2-beta
-for tool in gh git python3; do command -v "$tool" >/dev/null || { echo "Fehlendes Tool: $tool" >&2; exit 1; }; done
-LOGIN=$(gh api user --jq .login)
-[[ "$LOGIN" == "$OWNER" ]] || { echo "GitHub-Konto ist $LOGIN, erwartet $OWNER" >&2; exit 1; }
-gh repo view "$TARGET" >/dev/null || { echo "Repository fehlt. Nutze publish-github.command für die Erstveröffentlichung." >&2; exit 1; }
-[[ "$(gh repo view "$TARGET" --json visibility --jq .visibility)" == PUBLIC ]] || { echo "Repository ist nicht öffentlich; automatische Veröffentlichung abgebrochen." >&2; exit 1; }
-if gh api "repos/$TARGET/git/ref/tags/$TAG" >/dev/null 2>&1; then
-   echo "Tag $TAG existiert bereits. Kein Überschreiben." >&2; exit 1
+REPO="MrNoooooooob/mac-display-control"
+ACTION="${1:-publish}"
+VERSION="$(tr -d '\r\n[:space:]' < VERSION)"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9][a-zA-Z0-9.-]*)?$ ]] || { echo "Invalid VERSION" >&2; exit 1; }
+TAG="v$VERSION"
+ZIP="Mac-Display-Control-$TAG-macOS-arm64.zip"
+if [[ "$ACTION" == --help ]]; then
+  echo 'Usage: bash publish-update.command [--status|--retry-ci|--local-release]'
+  exit 0
 fi
-bash -n build.command
+for c in gh git python3; do command -v "$c" >/dev/null || { echo "Missing $c" >&2; exit 1; }; done
+gh auth status >/dev/null 2>&1 || { echo 'Run gh auth login' >&2; exit 1; }
+[[ "$(gh api user --jq .login)" == MrNoooooooob ]] || { echo 'Wrong GitHub login' >&2; exit 1; }
+gh repo view "$REPO" >/dev/null || exit 1
+tag_exists(){ gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; }
+release_exists(){ gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; }
+case "$ACTION" in
+--status)
+  echo "Version $VERSION"; gh run list --repo "$REPO" --workflow build.yml --limit 5 || true
+  if release_exists; then gh release view "$TAG" --repo "$REPO" --json url,assets --jq '{url,assets:[.assets[].name]}'; else echo 'No release asset yet'; fi
+  exit 0 ;;
+--retry-ci)
+  tag_exists || { echo "Unknown tag $TAG" >&2; exit 1; }
+  gh workflow run build.yml --repo "$REPO" --ref "$TAG"
+  exit 0 ;;
+--local-release)
+  tag_exists || { echo "Unknown tag $TAG" >&2; exit 1; }
+  [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { echo 'Requires Apple Silicon Mac' >&2; exit 1; }
+  TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+  gh repo clone "$REPO" "$TMP/repo" -- --depth 1 --branch "$TAG"
+  cd "$TMP/repo"
+  [[ "$(tr -d '\r\n[:space:]' < VERSION)" == "$VERSION" ]] || exit 1
+  bash build.command
+  [[ -x 'Mac Display Control.app/Contents/MacOS/MacDisplayControl' ]] || { echo 'App binary missing' >&2; exit 1; }
+  ditto -c -k --keepParent 'Mac Display Control.app' "$ZIP"
+  read -r -p "Upload finished app to $TAG? Enter ja: " CONFIRM
+  [[ "$CONFIRM" == ja ]] || exit 0
+  if release_exists; then
+    gh release upload "$TAG" "$ZIP" --repo "$REPO" --clobber
+    gh release edit "$TAG" --repo "$REPO" --notes-file RELEASE_NOTES.md
+  else
+    if [[ "$VERSION" == *-* ]]; then PRE=(--prerelease); else PRE=(); fi
+    gh release create "$TAG" "$ZIP" --repo "$REPO" --verify-tag --title "Mac Display Control $VERSION" --notes-file RELEASE_NOTES.md "${PRE[@]}"
+  fi
+  echo "Release: https://github.com/$REPO/releases/tag/$TAG"
+  exit 0 ;;
+publish) ;;
+*) echo 'Invalid action' >&2; exit 2 ;;
+esac
+if tag_exists; then echo "$TAG already exists. Use --local-release for a missing app ZIP."; exit 0; fi
 python3 tests/test_patch.py
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
-gh repo clone "$TARGET" "$TMP/repo" -- --single-branch --branch main
+bash -n build.command
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+gh repo clone "$REPO" "$TMP/repo" -- --branch main --single-branch
 cd "$TMP/repo"
-[[ -z "$(git status --porcelain)" ]] || { echo "Unsaubere Kopie" >&2; exit 1; }
-# Copy reviewed project sources while protecting the existing Git history.
-# No destructive --delete or forced push.
 tar -C "$ROOT" -cf - .github .gitignore Core UI tools tests LICENSE LICENSE-machidpi.txt NOTICE.md PRIVACY.md README.md CHANGELOG.md RELEASE_NOTES.md ROADMAP.md VERSION PUBLICATION.md build.command publish-github.command publish-update.command | tar -xf -
 git add -A
-if git diff --cached --quiet; then echo "Keine Änderungen"; exit 0; fi
-GITHUB_ID=$(gh api user --jq .id)
-git config user.name "$OWNER"
-git config user.email "$GITHUB_ID+$OWNER@users.noreply.github.com"
-git commit -m "Beta v0.0.2: 120 Hz safety policy and menu shortcut"
-echo "Es wird ein Commit und der Beta-Tag $TAG auf GitHub veröffentlicht: $TARGET"
-read -r -p "Zur Veröffentlichung 'ja' eingeben: " ANSWER
-[[ "$ANSWER" == ja ]] || { echo "Abbruch"; exit 0; }
+git diff --cached --quiet && { echo 'No changes'; exit 0; }
+USER_ID="$(gh api user --jq .id)"
+git config user.name MrNoooooooob
+git config user.email "${USER_ID}+MrNoooooooob@users.noreply.github.com"
+git commit -m "Release $TAG"
+read -r -p "Publish $TAG to GitHub? Enter ja: " CONFIRM
+[[ "$CONFIRM" == ja ]] || exit 0
 git push origin main
-git tag -a "$TAG" -m "Mac Display Control v0.0.2-beta"
+git tag -a "$TAG" -m "Mac Display Control $VERSION"
 git push origin "$TAG"
-echo "GitHub: https://github.com/$TARGET/releases/tag/$TAG (nach erfolgreichem CI-Build)"
+echo "GitHub builds the app: https://github.com/$REPO/actions"
+echo "Release: https://github.com/$REPO/releases/tag/$TAG"
