@@ -85,9 +85,13 @@ case "$MODE" in
       gh release edit "$TAG" --repo "$REPO" --notes-file RELEASE_NOTES.md
     else
       # --verify-tag: never create an incorrect release from a nonexistent tag.
-      if [[ "$VERSION" == *-* ]]; then PRE=(--prerelease); else PRE=(); fi
-      gh release create "$TAG" "$ARCHIVE" --repo "$REPO" --verify-tag \
-        --title "$RELEASE_TITLE" --notes-file RELEASE_NOTES.md "${PRE[@]}"
+      if [[ "$VERSION" == *-* ]]; then
+        gh release create "$TAG" "$ARCHIVE" --repo "$REPO" --verify-tag \
+          --title "$RELEASE_TITLE" --notes-file RELEASE_NOTES.md --prerelease
+      else
+        gh release create "$TAG" "$ARCHIVE" --repo "$REPO" --verify-tag \
+          --title "$RELEASE_TITLE" --notes-file RELEASE_NOTES.md
+      fi
     fi
     echo "Download bereit: https://github.com/$REPO/releases/tag/$TAG"
     exit 0
