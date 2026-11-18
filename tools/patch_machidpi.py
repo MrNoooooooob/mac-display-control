@@ -55,6 +55,22 @@ insert = '''        let openDashboard = NSMenuItem(title: "Mac Display Control �
             }
         }
         menu.addItem(.separator())
+        if let selected = monitor {
+            let quick120 = NSMenuItem(title: "Stabilitätsprofil · 120 Hz",
+                                      action: #selector(activate120FromMenu(_:)), keyEquivalent: "")
+            quick120.target = self
+            quick120.representedObject = selected.uuid
+            let offered = nativeRefreshRates(for: selected)
+            quick120.isEnabled = DisplayStabilityPolicy.canRequest(120, offered: offered)
+                && !refreshChangesInProgress.contains(selected.uuid)
+                && !hidpi.pending.contains(selected.id)
+                && (hidpi.sessions[selected.id] != nil
+                    || CGDisplayMirrorsDisplay(selected.id) == kCGNullDirectDisplay)
+            menu.addItem(quick120)
+            if !quick120.isEnabled {
+                menu.addItem(disabledItem("120 Hz derzeit nicht nativ gemeldet – Anzeige prüfen"))
+            }
+        }
 
 '''
 if text.count(anchor) != 1:
@@ -271,6 +287,22 @@ addition = r'''    // MARK: - Live menu bar status
         return CGCompleteDisplayConfiguration(config, .forSession)
     }
 
+    @objc private func activate120FromMenu(_ sender: NSMenuItem) {
+        guard let uuid = sender.representedObject as? String else { return }
+        dashboardSetRefreshRate(uuid: uuid, hz: 120)
+    }
+
+    // Re-resolve the display after unmirroring; never recreate HiDPI with a
+    // stale mirrored virtual panel size.
+    private func restoreHiDPISafely(uuid: String, rung: Rung?) {
+        guard let fresh = Displays.external(excluding: hidpi.virtualIDs)
+            .first(where: { $0.uuid == uuid }) else {
+            lastErrors[uuid] = "Physischer Monitor nach Moduswechsel nicht gefunden."
+            return
+        }
+        enableDisplay(fresh, rung: rung)
+    }
+
     private func dashboardSetRefreshRate(uuid: String, hz: Int) {
         guard [120, 144, 240].contains(hz), !refreshChangesInProgress.contains(uuid),
               let display = Displays.external(excluding: hidpi.virtualIDs)
@@ -285,6 +317,15 @@ addition = r'''    // MARK: - Live menu bar status
         let currentRate = CGDisplayCopyDisplayMode(display.id)?.refreshRate ?? display.refreshRate
         if abs(currentRate - Double(hz)) < 0.8 {
             dashboard?.model.lastNotice = "\(hz) Hz sind bereits aktiv."
+            rebuildMenu()
+            return
+        }
+
+        // Do not tear down a working virtual desktop for an unavailable mode.
+        let offered = nativeRefreshRates(for: display)
+        guard DisplayStabilityPolicy.canRequest(hz, offered: offered) else {
+            lastErrors[uuid] = "\(hz) Hz werden derzeit nicht nativ gemeldet. HiDPI bleibt unverändert. Gegebenenfalls zuerst die Spiegelung beenden und in macOS Displays prüfen."
+            dashboard?.model.lastNotice = lastErrors[uuid] ?? "Bildrate nicht verfügbar"
             rebuildMenu()
             return
         }
@@ -307,7 +348,7 @@ addition = r'''    // MARK: - Live menu bar status
               let previous = CGDisplayCopyDisplayMode(nativeDisplay.id),
               let candidate = nativeMode(for: nativeDisplay, hz: hz) else {
             lastErrors[uuid] = "\(hz) Hz werden nativ nicht angeboten; vorherige Einstellung bleibt."
-            if shouldRestoreHiDPI { enableDisplay(display, rung: oldRung) }
+            if shouldRestoreHiDPI { restoreHiDPISafely(uuid: uuid, rung: oldRung) }
             refreshChangesInProgress.remove(uuid)
             rebuildMenu()
             return
@@ -315,7 +356,7 @@ addition = r'''    // MARK: - Live menu bar status
         let result = setNativeMode(candidate, on: nativeDisplay.id)
         if result != .success {
             lastErrors[uuid] = "macOS hat \(hz) Hz abgelehnt (CoreGraphics \(result.rawValue))."
-            if shouldRestoreHiDPI { enableDisplay(display, rung: oldRung) }
+            if shouldRestoreHiDPI { restoreHiDPISafely(uuid: uuid, rung: oldRung) }
             refreshChangesInProgress.remove(uuid)
             rebuildMenu()
             return
@@ -324,7 +365,7 @@ addition = r'''    // MARK: - Live menu bar status
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self else { return }
             let measured = CGDisplayCopyDisplayMode(nativeDisplay.id)?.refreshRate ?? 0
-            if abs(measured - Double(hz)) >= 0.8 {
+            if !DisplayStabilityPolicy.isApplied(hz, measured: measured) {
                 _ = self.setNativeMode(previous, on: nativeDisplay.id)
                 self.lastErrors[uuid] = "Moduswechsel nicht bestätigt; vorherige Bildrate wiederhergestellt"
                 self.dashboard?.model.lastNotice = self.lastErrors[uuid] ?? "Bildratenwechsel fehlgeschlagen"
@@ -332,9 +373,8 @@ addition = r'''    // MARK: - Live menu bar status
                 self.lastErrors[uuid] = nil
                 self.dashboard?.model.lastNotice = "\(hz) Hz nativ bestätigt. HDR in macOS neu prüfen."
             }
-            if shouldRestoreHiDPI, let updated = Displays.external(excluding: self.hidpi.virtualIDs)
-                .first(where: { $0.uuid == uuid }) {
-                self.enableDisplay(updated, rung: oldRung)
+            if shouldRestoreHiDPI {
+                self.restoreHiDPISafely(uuid: uuid, rung: oldRung)
             }
             self.refreshChangesInProgress.remove(uuid)
             self.rebuildMenu()

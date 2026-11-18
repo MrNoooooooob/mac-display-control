@@ -40,7 +40,7 @@ final class DashboardModel: ObservableObject {
     var reload: (() -> Void)?
 
     func diagnosticText() -> String {
-        var lines = ["Mac Display Control 1.4 · machidpi Edition", "HDR-Schalter: manuell bestätigt oder unbekannt; HDMI-HDR/EDR-Ausgabe nicht automatisch messbar", ""]
+        var lines = ["Mac Display Control 0.0.2 Beta · by MrNoooooooob", "HDR-Schalter: manuell bestätigt oder unbekannt; HDMI-HDR/EDR-Ausgabe nicht automatisch messbar", ""]
         for p in panels {
             lines += [
                 "Display: \(p.name)",
@@ -287,11 +287,12 @@ private struct DashboardView: View {
                 Label("Bildstabilität & Bildrate", systemImage: "waveform.path.ecg.rectangle")
                     .font(.title3.bold())
                 Spacer()
-                Text(Int(panel.panelHz.rounded()) == 120 ? "120 HZ · STABILITÄT" : "LIVE")
+                Text(Int(panel.panelHz.rounded()) == 120 ? "120 HZ · TESTPROFIL" : "LIVE")
                     .font(.caption.bold())
-                    .foregroundStyle(Int(panel.panelHz.rounded()) == 120 ? .green : .orange)
+                    .foregroundStyle(Int(panel.panelHz.rounded()) == 120 ? .cyan : .orange)
             }
-            let rate = Double(panel.renderWidth) * Double(panel.renderHeight) * panel.panelHz / 1_000_000_000
+            let rate = DisplayStabilityPolicy.pixelRateGigapixels(width: panel.renderWidth,
+                            height: panel.renderHeight, hz: panel.panelHz)
             Text("\(panel.renderWidth) × \(panel.renderHeight) Renderpixel · \(Int(panel.panelHz.rounded())) Hz · ca. \(String(format: "%.2f", rate)) Gigapixel/s")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -313,11 +314,11 @@ private struct DashboardView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(rate == 120 ? .cyan : .gray)
-                    .disabled(panel.isPending || panel.isExternallyMirrored || Int(panel.panelHz.rounded()) == rate)
+                    .disabled(panel.isPending || panel.isExternallyMirrored || Int(panel.panelHz.rounded()) == rate || !panel.supportedRefreshRates.contains(rate))
                     .help("Es werden ausschließlich von macOS tatsächlich bereitgestellte native Displaymodi angewendet")
                 }
             }
-            Text("Die App prüft beim Umschalten, ob macOS die gewünschte Frequenz nativ anbietet. Falls nicht, bleibt der bisherige Modus erhalten. Bei aktivem HiDPI wird die Spiegelung kurzzeitig neu aufgebaut.")
+            Text("Nur nativ angebotene Bildraten sind wählbar. Ist 120 Hz ausgegraut, zuerst HiDPI deaktivieren und den nativen Modus in macOS prüfen. Eine flackerfreie Darstellung ist nicht garantiert.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if !panel.supportedRefreshRates.isEmpty {
@@ -489,7 +490,7 @@ private struct DashboardView: View {
             if !model.lastNotice.isEmpty {
                 Text(model.lastNotice).font(.caption).foregroundStyle(cyan)
             }
-            Text("© 2026 MrNoooooooob · Basis: machidpi (MIT, © 2026 ac50). Empfohlen: 120 Hz für stabile virtuelle HiDPI-Spiegelung. Es werden ausschließlich von macOS angebotene Modi gewählt. HDR-Ausgabe wird nicht automatisch verifiziert. Keine EDID-Overrides, kein SIP-Eingriff.")
+            Text("v0.0.2-beta · © 2026 MrNoooooooob · Basis: machidpi (MIT, © 2026 ac50). Empfohlen: 120 Hz für stabile virtuelle HiDPI-Spiegelung. Es werden ausschließlich von macOS angebotene Modi gewählt. HDR-Ausgabe wird nicht automatisch verifiziert. Keine EDID-Overrides, kein SIP-Eingriff.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }

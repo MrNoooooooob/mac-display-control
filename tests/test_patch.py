@@ -106,6 +106,9 @@ with tempfile.TemporaryDirectory() as tmp:
     a,d=app.read_text(),disp.read_text()
     for marker in [
         'NSStatusItem.variableLength',
+        'Stabilitätsprofil · 120 Hz',
+        'quick120.isEnabled = DisplayStabilityPolicy.canRequest',
+        'if shouldRestoreHiDPI { restoreHiDPISafely',
         'private func modeFingerprint(for display: PhysicalDisplay)',
         'CGDisplayMirrorsDisplay(display.id)',
         'isExternallyMirrored: foreignMirror',
@@ -125,19 +128,22 @@ with tempfile.TemporaryDirectory() as tmp:
         'let panel = panelPixels(for: id)',
     ]:
         assert marker in d,marker
+    assert 'panel.supportedRefreshRates.contains(rate)' in (ROOT/'UI/DisplayDashboard.swift').read_text()
     assert 'Bildstabilität & Bildrate' in (ROOT/'UI/DisplayDashboard.swift').read_text()
     assert 'model.setHiDPI?(panel.id, false)' in (ROOT/'UI/DisplayDashboard.swift').read_text()
     assert 'model.setRefreshRate?(requested.id, requested.hz)' in (ROOT/'UI/DisplayDashboard.swift').read_text()
     assert 'Button("Bildrate wechseln")' in (ROOT/'UI/DisplayDashboard.swift').read_text()
-    for m in ['dashboardSetRefreshRate(uuid: String, hz: Int)', 'nativeMode(for display: PhysicalDisplay, hz: Int)', 'CGCancelDisplayConfiguration(config)', 'setNativeMode(previous, on: nativeDisplay.id)', 'supportedRefreshRates: nativeRefreshRates(for: physical)', 'ui.model.setRefreshRate =']:
+    for m in ['activate120FromMenu(_ sender: NSMenuItem)', 'restoreHiDPISafely(uuid: String, rung: Rung?)', 'DisplayStabilityPolicy.canRequest(hz, offered: offered)', 'dashboardSetRefreshRate(uuid: String, hz: Int)', 'nativeMode(for display: PhysicalDisplay, hz: Int)', 'CGCancelDisplayConfiguration(config)', 'setNativeMode(previous, on: nativeDisplay.id)', 'supportedRefreshRates: nativeRefreshRates(for: physical)', 'ui.model.setRefreshRate =']:
         assert m in a, m
-    for path in [app,disp,ROOT/'UI/DisplayDashboard.swift']:
+    for path in [app,disp,ROOT/'UI/DisplayDashboard.swift',ROOT/'Core/DisplayStabilityPolicy.swift']:
         result=subprocess.run(['swiftc','-frontend','-parse',str(path)],capture_output=True,text=True)
         assert result.returncode==0,(path,result.stderr)
+    # Unsupported rate is rejected BEFORE the virtual display is touched.
+    assert a.index('guard DisplayStabilityPolicy.canRequest(hz, offered: offered)') < a.index('if shouldRestoreHiDPI { hidpi.disable(physicalID: display.id)')
     # The install script should never modify system display overrides or SIP.
     build=(ROOT/'build.command').read_text()
     assert '3d105b0f18cc2522e27028bc1a1ee4b6ff1ef7d6' in build
-    assert 'CFBundleShortVersionString</key><string>0.0.1' in build
+    assert 'CFBundleShortVersionString</key><string>0.0.2' in build
     assert 'csrutil' not in build
     assert 'DisplayVendorID' not in build
     print('PASS: upstream anchors / source patch / live Hz profile / display filtering / Swift parser / safe build script')

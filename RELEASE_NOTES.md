@@ -1,13 +1,19 @@
-# Mac Display Control by MrNoooooooob v0.0.1-beta (Beta)
+# Mac Display Control v0.0.2-beta — Stability Foundations
 
-Eine eigenständige deutschsprachige macOS-Menüleisten-App auf Basis des MIT-lizenzierten **machidpi**-Kerns.
+© 2026 MrNoooooooob · Open-source beta for Apple Silicon on macOS 26+
 
-**Neu:** 120-Hz-Stabilitätsprofil, optionale 144/240-Hz-Auswahl, Überprüfung der tatsächlich vom physischen Display angebotenen Modi und Neuaufbau der virtuellen HiDPI-Spiegelung nach einem Frequenzwechsel. Live-Menüleiste mit HiDPI-Faktor, manuell bestätigtem HDR-Schalter (`HDR ✓*`) und aktueller Bildwiederholrate.
+**What's new**
+- Dedicated 120 Hz menu-bar action if the physical monitor reports a compatible mode.
+- Safer refresh changes: non-offered modes are rejected without tearing down working HiDPI.
+- Refresh confirmation and recovery use the actually measured panel rate.
+- Improved LG UltraGear 3440×1440 display identity and virtual-display filtering (carried over).
+- Independent `DisplayStabilityPolicy.swift` core module with unit tests.
+- Human-readable HiDPI / HDR* / Hz status and dark SwiftUI dashboard.
 
-**Bekannte Einschränkungen:** Virtuelle HiDPI-Spiegelung unterstützt laut Originalprojekt keine bestätigte HDR-Renderpipeline. Das pinke Flackern bei 240 Hz kann durch 120 Hz vermindert werden, die Ursache ist nicht abschließend geklärt. Bei einem Grafikfehler die App beenden und die native Anzeige wiederherstellen.
+**Known limitations**
+- Pixel artifacts cannot be automatically detected; 120 Hz has appeared more stable than 240 Hz on one LG OLED test configuration, but is not guaranteed flicker-free.
+- `HDR ✓*` is a manual HDR-switch confirmation, not validation of HDMI HDR pixels. The upstream virtual display does **not** provide a verified HDR render path.
+- Changing refresh rate can briefly blank the screen; ad-hoc signing, not notarized.
+- macOS native compilation and attached-monitor testing remain required.
 
-**Kompatibilität:** Apple Silicon, macOS 26+, lokale Erstellung bzw. aus dem CI erstelltes ad-hoc-signiertes Paket, nicht Apple-notarisiert.
-
-**Open Source:** MIT für eigene Änderungen, Originalprojekt und Copyright von ac50 ausdrücklich genannt; `LICENSE-machidpi.txt` liegt bei.
-
-**© 2026 MrNoooooooob** für neue App-Oberfläche, Integrationspatches und Dokumentation. Basierend auf machidpi (© 2026 ac50, MIT).
+**Dependencies and rights:** Independent UI/policy by © 2026 MrNoooooooob; virtual HiDPI core by © 2026 ac50 (`machidpi`, MIT). This is not an official machidpi release.

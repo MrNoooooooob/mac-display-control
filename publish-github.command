@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REPOSITORY='MrNoooooooob/mac-display-control'
-TAG='v0.0.1-beta'
+TAG='v0.0.2-beta'
 
 for dependency in gh git python3; do
   if ! command -v "$dependency" >/dev/null 2>&1; then
@@ -42,9 +42,9 @@ GH_ID="$(gh api user --jq '.id')"
 git config user.name "$LOGIN"
 git config user.email "${GH_ID}+${LOGIN}@users.noreply.github.com"
 git add -A
-git commit -m 'Initial public beta: Mac Display Control 0.0.1'
+git commit -m 'Initial public beta: Mac Display Control 0.0.2'
 gh repo create "$REPOSITORY" --public --description 'Mac Display Control: HiDPI, HDR status and 120 Hz stability profiles for macOS' --source=. --remote=origin --push
-git tag -a "$TAG" -m 'Mac Display Control 0.0.1 Beta'
+git tag -a "$TAG" -m 'Mac Display Control 0.0.2 Beta'
 git push origin "$TAG"
 echo
 printf 'Quellcode veröffentlicht: https://github.com/%s\n' "$REPOSITORY"

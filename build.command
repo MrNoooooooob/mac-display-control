@@ -33,6 +33,7 @@ if [[ "$(git rev-parse HEAD)" != "$PIN" ]]; then
     exit 1
 fi
 cp "$ROOT/UI/DisplayDashboard.swift" Sources/machidpi/DisplayDashboard.swift
+cp "$ROOT/Core/DisplayStabilityPolicy.swift" Sources/machidpi/DisplayStabilityPolicy.swift
 python3 "$ROOT/tools/patch_machidpi.py" .
 
 echo 'Baue Mac Display Control (mit originalem machidpi-HiDPI-Kern) …'
@@ -50,8 +51,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Mac Display Control</string>
 <key>CFBundleDisplayName</key><string>Mac Display Control</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.0.1</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>0.0.2</string>
+<key>CFBundleVersion</key><string>2</string>
 <key>NSHumanReadableCopyright</key><string>Copyright © 2026 MrNoooooooob. Includes machidpi © 2026 ac50 (MIT).</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>LSUIElement</key><true/>

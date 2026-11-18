@@ -1,25 +1,16 @@
-# Changelog · Mac Display Control by MrNoooooooob
+# Changelog
 
-## 0.0.1-beta (erste öffentliche Beta)
+## 0.0.2-beta — Stability Foundations (2026-11-18)
+- Added independent `DisplayStabilityPolicy` Swift module, with executable unit tests.
+- Added a one-click **120 Hz** menu-bar action when native timings are detected.
+- Prevented avoidable HiDPI teardown when the requested refresh rate is not natively offered.
+- Re-resolve physical display after mirror teardown before re-enabling a virtual session.
+- Verify requested refresh rate from measured mode before declaring success; keep rollback.
+- Disable unsupported 120/144/240 Hz buttons in the display dashboard.
+- Improved wording: 120 Hz is a test profile, not proof of artifact-free operation.
+- New safe GitHub update script; macOS CI policy tests.
 
-- 120 Hz als bevorzugte Stabilitätseinstellung für den LG UltraGear OLED ergänzt.
-- 120/144/240-Hz-Bedienelemente: nativen Modus beim physischen Display suchen, nicht virtuelle Hz vortäuschen.
-- Virtuelle HiDPI-Spiegelung wird für einen Bildratenwechsel bei Bedarf beendet und danach mit der tatsächlich gemessenen nativen Frequenz erneut gestartet.
-- Nachkontrolle der nativen Frequenz und Best-Effort-Rückstellung, falls macOS den Modus nicht übernommen hat.
-- Vorsichtshinweis vor jedem bewussten Bildratenwechsel; HDR-Bestätigung nach Moduswechsel ungültig.
-- Statusleiste bleibt live: HiDPI 2×, HDR ✓* (nur manuell bestätigt), tatsächliche Hz.
-- Kompatibilität mit dem festgelegten machidpi-MIT-Quellstand bleibt erhalten.
-- GitHub-Repository-Material mit MIT-Hinweisen, Build-Workflow und Release-Vorlage ergänzt.
+## 0.0.1-beta — Initial Beta
+- Initial SwiftUI interface and 120/144/240 Hz experiments, HiDPI/HDR status, machidpi integration.
 
-## 1.3.0
-
-- Physische LG-Panelgröße trotz virtueller Spiegelung 3440 × 1440.
-- Bildstabilitätsdiagnose für pinke Flecken/Flackern ergänzt.
-
-## 1.2.0
-
-- Doppelte Displayeinträge und fehlerhafte Panelauflösungen im Dashboard reduziert.
-
-## 1.1.0
-
-- HDR-Schalter kann manuell bestätigt werden, ohne echten HDMI-HDR-Nachweis zu behaupten.
+**No confirmed HDR pipeline for virtual mirroring.** Full macOS build and hardware tests remain pending for 0.0.2-beta.

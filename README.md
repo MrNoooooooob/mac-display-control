@@ -1,16 +1,16 @@
 # Mac Display Control by MrNoooooooob
 
 **© 2026 MrNoooooooob** · Eigene macOS-Menüleisten-App für externe Displays: HiDPI, Bildwiederholrate, HDR-Hinweis und Stabilitätsprofile.  
-*Version 0.0.1 Beta · Deutsch · Apple Silicon · macOS 26+*
+*Version 0.0.2 Beta · Deutsch · Apple Silicon · macOS 26+*
 
-Das Projekt basiert auf dem Open-Source-Kern [machidpi](https://github.com/ac50/machidpi) von **ac50**, veröffentlicht unter der MIT-Lizenz. Mac Display Control ergänzt eine eigenständige SwiftUI-Oberfläche und Displaydiagnose. Der virtuelle HiDPI-Kern gehört weiterhin machidpi; dies ist **kein offizielles machidpi-Release**.
+Die erste eigenständige Codekomponente liegt jetzt unter `Core/DisplayStabilityPolicy.swift` und enthält konservative Bildratenregeln. Das Projekt basiert auf dem Open-Source-Kern [machidpi](https://github.com/ac50/machidpi) von **ac50**, veröffentlicht unter der MIT-Lizenz. Mac Display Control ergänzt eine eigenständige SwiftUI-Oberfläche und Displaydiagnose. Der virtuelle HiDPI-Kern gehört weiterhin machidpi; dies ist **kein offizielles machidpi-Release**.
 
 ## Funktionen
 
 - Live-Menüleiste: `HiDPI 2× · HDR ✓* · 120 Hz` (Beispiel)
 - Übersicht über **physisches Panel**, logische Desktopfläche und **2×-Renderauflösung**
-- **120-Hz-Stabilitätsprofil** für virtuelle HiDPI-Spiegelung; 144/240 Hz sind optional, wenn macOS die Modi nativ anbietet
-- Bei Bildratenwechsel: virtuelle Spiegelung nötigenfalls trennen, echten nativen Bildschirmmodus mit CoreGraphics auswählen, Ergebnis überprüfen und HiDPI neu starten
+- **120-Hz-Menüleistenaktion und Stabilitätsprofil** für virtuelle HiDPI-Spiegelung, nur wenn macOS 120 Hz nativ anbietet; 144/240 Hz bleiben optionale Modi. Nicht garantiert flackerfrei.
+- Bei Bildratenwechsel: gewünschte native Frequenz zunächst prüfen, erst dann virtuelle Spiegelung nötigenfalls trennen, echten nativen Bildschirmmodus mit CoreGraphics auswählen, Ergebnis überprüfen und HiDPI neu starten
 - Fehlgeschlagene Moduswechsel werden nach Möglichkeit zurückgesetzt; nicht unterstützte Bildraten werden **nicht erzwungen**
 - Wahl der UI-Skalierung ohne größere Fenster als nötig (3440 × 1440 logische Punkte für das LG UltraGear 34GX90SA-W)
 - Monitorerkennung für LG SMARTGAME+ mit korrekten **3440 × 1440 physischen Pixeln**; Filter gegen doppelte virtuelle Displays
@@ -30,7 +30,7 @@ Auf dem getesteten **LG UltraGear 34GX90SA-W** am Mac mini M4 Pro kam es bei vir
 
 - Mac mit Apple Silicon, macOS **26 oder neuer**
 - Swift/Xcode Command Line Tools, Git, Python 3, Internet beim ersten Build
-- Ausgerichtet auf eine vom Nutzer geprüfte Kombination (vollständiger v0.0.1-beta-Build noch nicht getestet): LG UltraGear 34GX90SA-W, 3440 × 1440, per HDMI am Mac mini M4 Pro
+- Ausgerichtet auf eine vom Nutzer geprüfte Kombination (vollständiger v0.0.2-beta-Build noch nicht getestet): LG UltraGear 34GX90SA-W, 3440 × 1440, per HDMI am Mac mini M4 Pro
 - Andere externe Displays: teilweise möglich, jedoch nicht verifiziert
 - **Achtung:** Der virtuelle HiDPI-Kern verwendet eine private macOS-Grafikschnittstelle. Ein macOS-Update kann ihn verändern oder deaktivieren.
 
@@ -66,7 +66,7 @@ bash -n build.command
 
 ## Veröffentlichung auf GitHub
 
-Dieses Verzeichnis ist für das neue, eigenständige öffentliche Repository **`MrNoooooooob/mac-display-control`** vorbereitet. Es ist vor der Erstveröffentlichung **noch nicht online**. Der Workflow unter `.github/workflows/build.yml` baut die App bei jedem Push und erstellt beim Push eines Tags wie `v0.0.1-beta` eine **Vorabveröffentlichung** mit ZIP-Datei. Mit `bash publish-github.command` auf deinem Mac das Repository erstellen und den Tag `v0.0.1-beta` veröffentlichen. Dieser Tag löst bei erfolgreichem macOS-CI-Build automatisch einen GitHub-Pre-Release aus. Screenshots können nach Prüfung persönlicher Informationen im Repository ergänzt werden.
+Das öffentliche GitHub-Repository **`MrNoooooooob/mac-display-control`** existiert bereits (mit `v0.0.1-beta`-Tag). **v0.0.2-beta ist noch nicht veröffentlicht**. Der Workflow unter `.github/workflows/build.yml` baut auf dem macOS-Runner die App und erstellt bei erfolgreichem Tag-Build eine GitHub-Vorabveröffentlichung mit ZIP-Datei. Nutze für den nächsten Release auf deinem Mac `bash publish-update.command`. Screenshots sollten vor dem Hochladen auf private Informationen überprüft werden.
 
 ## Herkunft / Lizenz
 
@@ -86,3 +86,9 @@ Siehe [`ROADMAP.md`](ROADMAP.md): eigener Modus-/Statuskern, mehr Diagnosen, sic
 ## GitHub-Veröffentlichung mit GitHub CLI
 
 Wenn GitHub CLI installiert und angemeldet ist (`gh auth login`), kann `bash publish-github.command` das neue öffentliche Repository **MrNoooooooob/mac-display-control** anlegen und die Quellen hochladen. Das Skript prüft das angemeldete Konto, fragt ausdrücklich vor dem öffentlichen Upload und bricht ab, falls das Repository bereits existiert. Das Skript veröffentlicht den Release-Tag; der Download-Build wird anschließend von GitHub Actions erstellt. Es wurde lokal auf Shell-Syntax geprüft, aber nicht auf einem verbundenen Mac ausgeführt.
+
+## Release 0.0.2 Beta (Stability Foundations)
+
+Das Repository existiert bereits: Nutze **`bash publish-update.command`**. `publish-github.command` ist nur für eine bislang fehlende Erstveröffentlichung gedacht und wird hier bewusst abbrechen. Beide fragen vor dem öffentlichen Push nach Bestätigung. `0.0.2-beta` ist ein Beta-Release, kein Beleg für flackerfreie Spiegelung.
+
+Technische Unit-Tests (auch unter Linux): `swiftc Core/DisplayStabilityPolicy.swift tests/StabilityPolicyTests.swift -o /tmp/mdc-stability-tests && /tmp/mdc-stability-tests`.
