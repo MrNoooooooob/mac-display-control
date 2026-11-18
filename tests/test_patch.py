@@ -143,7 +143,8 @@ with tempfile.TemporaryDirectory() as tmp:
     # The install script should never modify system display overrides or SIP.
     build=(ROOT/'build.command').read_text()
     assert '3d105b0f18cc2522e27028bc1a1ee4b6ff1ef7d6' in build
-    assert 'CFBundleShortVersionString</key><string>0.0.2' in build
+    assert 'CFBundleShortVersionString</key><string>${BASE_VERSION}' in build
+    assert 'CFBundleVersion</key><string>${BASE_VERSION}' in build
     assert 'csrutil' not in build
     assert 'DisplayVendorID' not in build
     print('PASS: upstream anchors / source patch / live Hz profile / display filtering / Swift parser / safe build script')
