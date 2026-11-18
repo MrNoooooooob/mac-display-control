@@ -9,35 +9,66 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: mdc-${ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - name: Check source patch and scripts
+      - name: Validate version and code
+        shell: bash
         run: |
+          set -euo pipefail
+          VERSION=$(tr -d '\r\n[:space:]' < VERSION)
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9][a-zA-Z0-9.-]*)?$ ]]
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            [[ "$GITHUB_REF_NAME" == "v$VERSION" ]] || exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "ARCHIVE=Mac-Display-Control-v$VERSION-macOS-arm64.zip" >> "$GITHUB_ENV"
+          test -s RELEASE_NOTES.md
+          bash -n build.command publish-update.command
           python3 tests/test_patch.py
-          bash -n build.command
-          bash -n publish-github.command
-          bash -n publish-update.command
-          swiftc Core/DisplayStabilityPolicy.swift tests/StabilityPolicyTests.swift -o /tmp/stability-tests
-          /tmp/stability-tests
-      - name: Build app (Apple Silicon)
+          swiftc Core/DisplayStabilityPolicy.swift tests/StabilityPolicyTests.swift -o /tmp/mdc-tests
+          /tmp/mdc-tests
+
+      - name: Build Apple Silicon app
         run: bash build.command
-      - name: Create downloadable app ZIP
-        run: ditto -c -k --sequesterRsrc --keepParent "Mac Display Control.app" "Mac-Display-Control-v0.0.2-beta-macOS-arm64.zip"
-      - name: Upload build artifact
+
+      - name: Package finished .app
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x 'Mac Display Control.app/Contents/MacOS/MacDisplayControl'
+          plutil -lint 'Mac Display Control.app/Contents/Info.plist'
+          codesign --verify --deep 'Mac Display Control.app'
+          ditto -c -k --sequesterRsrc --keepParent 'Mac Display Control.app' "$ARCHIVE"
+          test -s "$ARCHIVE"
+
+      - name: Upload CI artifact
         uses: actions/upload-artifact@v4
         with:
           name: Mac-Display-Control-macOS-arm64
-          path: Mac-Display-Control-v0.0.2-beta-macOS-arm64.zip
-      - name: Create GitHub pre-release for version tags
+          path: ${ env.ARCHIVE }}
+          if-no-files-found: error
+
+      - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${ github.token }}
+        shell: bash
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            "Mac-Display-Control-v0.0.2-beta-macOS-arm64.zip" \
-            --title "Mac Display Control 0.0.2 Beta" \
-            --notes-file RELEASE_NOTES.md \
-            --prerelease
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" --clobber
+            gh release edit "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md
+          else
+            if [[ "$VERSION" == *-* ]]; then PRE=(--prerelease); else PRE=(); fi
+            gh release create "$GITHUB_REF_NAME" "$ARCHIVE" --verify-tag \
+              --title "Mac Display Control $VERSION" \
+              --notes-file RELEASE_NOTES.md "$PRE[@]}"
+          fi
+          echo "Published: https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
