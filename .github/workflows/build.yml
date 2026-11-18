@@ -69,6 +69,6 @@ jobs:
             if [[ "$VERSION" == *-* ]]; then PRE=(--prerelease); else PRE=(); fi
             gh release create "$GITHUB_REF_NAME" "$ARCHIVE" --verify-tag \
               --title "Mac Display Control $VERSION" \
-              --notes-file RELEASE_NOTES.md "$PRE[@]}"
+              --notes-file RELEASE_NOTES.md "${PRE[@]}"
           fi
           echo "Published: https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
