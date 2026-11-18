@@ -4,6 +4,9 @@ cd "$(dirname "$0")"
 ROOT="$PWD"
 UPSTREAM="https://github.com/ac50/machidpi.git"
 PIN="3d105b0f18cc2522e27028bc1a1ee4b6ff1ef7d6"
+VERSION="$(tr -d '\r\n[:space:]' < "$ROOT/VERSION")"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9][a-zA-Z0-9.-]*)?$ ]] || { echo "Ungültige VERSION" >&2; exit 1; }
+BASE_VERSION="${VERSION%%-*}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo 'Diese App muss auf macOS (Apple Silicon) gebaut werden.' >&2
@@ -42,7 +45,7 @@ APP="$ROOT/Mac Display Control.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
 cp "$BIN_DIR/machidpi" "$APP/Contents/MacOS/MacDisplayControl"
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -51,8 +54,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Mac Display Control</string>
 <key>CFBundleDisplayName</key><string>Mac Display Control</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.0.2</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>${BASE_VERSION}</string>
+<key>CFBundleVersion</key><string>${BASE_VERSION}</string>
 <key>NSHumanReadableCopyright</key><string>Copyright © 2026 MrNoooooooob. Includes machidpi © 2026 ac50 (MIT).</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>LSUIElement</key><true/>
@@ -63,7 +66,9 @@ PLIST
 cp "$ROOT/LICENSE" "$APP/Contents/Resources/LICENSE-Mac-Display-Control.txt"
 cp "$ROOT/LICENSE-machidpi.txt" "$APP/Contents/Resources/LICENSE-machidpi.txt"
 cp "$ROOT/NOTICE.md" "$APP/Contents/Resources/NOTICE.md"
+plutil -lint "$APP/Contents/Info.plist"
 codesign --force --sign - "$APP"
+codesign --verify --deep "$APP"
 
 echo
 printf '\033[32mMac Display Control.app erstellt: %s\033[0m\n' "$APP"
